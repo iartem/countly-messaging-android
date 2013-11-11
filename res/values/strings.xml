@@ -3,5 +3,7 @@
 
     <string name="hello">Hello World, CountlyActivity!</string>
     <string name="app_name">Countly</string>
+    <string name="countly_messaging_open_link">Open link</string>
+    <string name="countly_messaging_leave_review">Leave review</string>
 
 </resources>

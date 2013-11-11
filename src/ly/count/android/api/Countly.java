@@ -3,14 +3,14 @@ package ly.count.android.api;
 import java.io.InputStream;
 import java.io.UnsupportedEncodingException;
 import java.net.URI;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.Locale;
-import java.util.Map;
-import java.util.Timer;
-import java.util.TimerTask;
+import java.net.URLEncoder;
+import java.util.*;
 
+import android.app.Activity;
+import android.content.SharedPreferences;
+import com.google.android.gms.common.ConnectionResult;
+import com.google.android.gms.common.GooglePlayServicesUtil;
+import com.google.android.gms.gcm.GoogleCloudMessaging;
 import org.OpenUDID.OpenUDID_manager;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.methods.HttpGet;
@@ -63,16 +63,28 @@ public class Countly {
 		activityCount_ = 0;
 	}
 
-	public void init(Context context, String serverURL, String appKey) {
-		OpenUDID_manager.sync(context);
-		countlyDB_ = new CountlyDB(context);
+	public void init(Activity activity, String serverURL, String appKey) {
+        init(activity, null, serverURL, appKey, null);
+    }
 
-		queue_.setContext(context);
+	public void init(Activity activity, String serverURL, String appKey, String gcmSenderId) {
+        init(activity, activity.getClass(), serverURL, appKey, gcmSenderId);
+    }
+
+	public void init(Activity activity, Class<? extends Activity> activityClass, String serverURL, String appKey, String gcmSenderId) {
+		OpenUDID_manager.sync(activity);
+		countlyDB_ = new CountlyDB(activity);
+
+		queue_.setContext(activity);
 		queue_.setServerURL(serverURL);
 		queue_.setAppKey(appKey);
 		queue_.setCountlyDB(countlyDB_);
 
 		eventQueue_ = new EventQueue(countlyDB_);
+
+        if (!"".equals(gcmSenderId)) {
+            CountlyMessaging.initMessaging(activity, activityClass, gcmSenderId);
+        }
 	}
 
 	public void onStart() {
@@ -85,6 +97,10 @@ public class Countly {
 		activityCount_--;
 		if (activityCount_ == 0)
 			onStopHelper();
+	}
+
+	public void onRegistrationId(String registrationId) {
+        queue_.tokenSession(registrationId);
 	}
 
 	public void onStartHelper() {
@@ -132,6 +148,20 @@ public class Countly {
 
 	public void recordEvent(String key, Map<String, String> segmentation, int count, double sum) {
 		eventQueue_.recordEvent(key, segmentation, count, sum);
+
+		if (eventQueue_.size() >= 10)
+			queue_.recordEvents(eventQueue_.events());
+	}
+
+	public void recordMessageAction (String key) {
+		eventQueue_.recordPushAction(key);
+
+		if (eventQueue_.size() >= 10)
+			queue_.recordEvents(eventQueue_.events());
+	}
+
+	public void recordMessageOpen (String key) {
+		eventQueue_.recordPushOpen(key);
 
 		if (eventQueue_.size() >= 10)
 			queue_.recordEvents(eventQueue_.events());
@@ -186,6 +216,9 @@ class ConnectionQueue {
 		data += "&" + "begin_session=" + "1";
 		data += "&" + "metrics=" + DeviceInfo.getMetrics(context_);
 
+        String dimensions = DeviceInfo.getDimensionsJson(context_);
+        if (dimensions != null) data += "&dimensions=" + dimensions;
+
 		queue_.offer(data);
 
 		tick();
@@ -197,6 +230,28 @@ class ConnectionQueue {
 		data += "&" + "device_id=" + DeviceInfo.getUDID();
 		data += "&" + "timestamp=" + (long) (System.currentTimeMillis() / 1000.0);
 		data += "&" + "session_duration=" + duration;
+
+        String dimensions = DeviceInfo.getDimensionsJson(context_);
+        if (dimensions != null) data += "&dimensions=" + dimensions;
+
+		queue_.offer(data);
+
+		tick();
+	}
+
+	public void tokenSession(String token) {
+        DeviceInfo.addDimension(context_, "push", "true");
+
+		String data;
+		data = "app_key=" + appKey_;
+		data += "&" + "device_id=" + DeviceInfo.getUDID();
+		data += "&" + "timestamp=" + (long) (System.currentTimeMillis() / 1000.0);
+		data += "&" + "token_session=1";
+		data += "&" + "android_token=" + token;
+		data += "&" + "locale=" + Locale.getDefault().getLanguage();
+
+        String dimensions = DeviceInfo.getDimensionsJson(context_);
+        if (dimensions != null) data += "&dimensions=" + dimensions;
 
 		queue_.offer(data);
 
@@ -211,6 +266,9 @@ class ConnectionQueue {
 		data += "&" + "end_session=" + "1";
 		data += "&" + "session_duration=" + duration;
 
+        String dimensions = DeviceInfo.getDimensionsJson(context_);
+        if (dimensions != null) data += "&dimensions=" + dimensions;
+
 		queue_.offer(data);
 
 		tick();
@@ -222,6 +280,9 @@ class ConnectionQueue {
 		data += "&" + "device_id=" + DeviceInfo.getUDID();
 		data += "&" + "timestamp=" + (long) (System.currentTimeMillis() / 1000.0);
 		data += "&" + "events=" + events;
+
+        String dimensions = DeviceInfo.getDimensionsJson(context_);
+        if (dimensions != null) data += "&dimensions=" + dimensions;
 
 		queue_.offer(data);
 
@@ -280,6 +341,60 @@ class DeviceInfo {
 	public static String getUDID() {
 		return OpenUDID_manager.isInitialized() == false ? "REPLACE_UDID" : OpenUDID_manager.getOpenUDID();
 	}
+
+    private static final String DIMENSIONS_PROPERTY = "countly_dimensions";
+    private static final String DIMENSION_KV_SEPARATOR = "=";
+
+    private static String escape(String str) {
+        return str.replace("\"", "\\\"").replace("\\", "\\\\");
+    }
+
+    public static String getDimensionsJson(Context context) {
+        Map<String, String> dimensions = getDimensions(context);
+        if (dimensions == null) return null;
+
+        StringBuilder json = new StringBuilder("{");
+        for (String key : dimensions.keySet()) {
+            if (json.length() > 1) json.append(',');
+            json.append('"').append(key).append("\":\"").append(escape(dimensions.get(key))).append("\"");
+        }
+        json.append('}');
+
+        try {
+            return URLEncoder.encode(json.toString(), "UTF-8");
+        } catch (UnsupportedEncodingException e) {
+            return null;
+        }
+    }
+
+    public static Map<String, String> getDimensions(Context context) {
+        Set<String> dims = context.getApplicationContext().getSharedPreferences(Countly.class.getSimpleName(),
+                Context.MODE_PRIVATE).getStringSet(DIMENSIONS_PROPERTY, null);
+
+        if (dims == null) return null;
+        else {
+            Map<String, String> dimensions = new HashMap<String, String>();
+            for (String dim : dims) {
+                String[] kv = dim.split(DIMENSION_KV_SEPARATOR);
+                if (kv.length > 0) dimensions.put(kv[0], kv[1]);
+            }
+            return dimensions.size() > 0 ? dimensions : null;
+        }
+    }
+
+    public static void addDimension(Context context, String key, String value) {
+        Map<String, String> dimensions = getDimensions(context);
+        if (dimensions == null) dimensions = new HashMap<String, String>();
+
+        dimensions.put(key, value);
+
+        Set<String> dims = new HashSet<String>();
+        for (String k : dimensions.keySet()) {
+            dims.add(k + DIMENSION_KV_SEPARATOR + dimensions.get(k));
+        }
+        context.getApplicationContext().getSharedPreferences(Countly.class.getSimpleName(), Context.MODE_PRIVATE).edit()
+                .putStringSet(DIMENSIONS_PROPERTY, dims).commit();
+    }
 
 	public static String getOS() {
 		return "Android";
@@ -513,6 +628,18 @@ class EventQueue {
 			countlyDB_.saveEvents(events_);
 		}
 	}
+
+    public void recordPushOpen(String id) {
+        Map<String, String> segmentation = new HashMap<String, String>();
+        segmentation.put("i", id);
+        recordEvent("_push_open", segmentation, 1);
+    }
+
+    public void recordPushAction(String id) {
+        Map<String, String> segmentation = new HashMap<String, String>();
+        segmentation.put("i", id);
+        recordEvent("_push_action", segmentation, 1);
+    }
 }
 
 class CountlyDB extends SQLiteOpenHelper {
