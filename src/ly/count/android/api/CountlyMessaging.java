@@ -176,7 +176,7 @@ public class CountlyMessaging extends WakefulBroadcastReceiver {
 
     /**
      * Action for Countly Messaging BroadcastReceiver.
-     * Once message is arrived, Countly Messaging will send a notification with action "APP_PACKAGE_NAME.countly.messaging"
+     * Once message is arrived, Countly Messaging will send a broadcast notification with action "APP_PACKAGE_NAME.countly.messaging"
      * to which you can subscribe via BroadcastReceiver. Note, that
      */
     public static String BROADCAST_RECEIVER_ACTION_MESSAGE = "ly.count.messaging.broadcast.message";
@@ -357,7 +357,9 @@ public class CountlyMessaging extends WakefulBroadcastReceiver {
                         getContext().sendBroadcast(broadcast);
 
                         // Show message if not silent
-                        if (!msg.isSilent()) {
+                        if (msg.isSilent()) {
+                            Countly.sharedInstance().recordMessageOpen(msg.getId());
+                        } else {
                             // Go through proxy activity to be able to record message open & action performed events
                             Intent proxy = new Intent(getContext(), ProxyActivity.class);
                             proxy.putExtra(EXTRA_MESSAGE, msg);

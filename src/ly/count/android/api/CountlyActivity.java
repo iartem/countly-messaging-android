@@ -28,7 +28,8 @@ public class CountlyActivity extends Activity {
         registerReceiver(new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
-                Log.i(TAG, "Got a broadcast");
+                CountlyMessaging.Message message = intent.getParcelableExtra(CountlyMessaging.BROADCAST_RECEIVER_ACTION_MESSAGE);
+                Log.i(TAG, "Got a message with data: " + message.getData());
             }
         }, filter);
 
