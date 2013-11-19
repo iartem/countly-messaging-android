@@ -19,7 +19,8 @@ Installing Android SDK requires two very easy steps. Countly Android SDK uses Op
     &lt;intent-filter&gt;
         &lt;action android:name=&quot;org.openudid.GETUDID&quot; /&gt;
     &lt;/intent-filter&gt;
-&lt;/service&gt;</pre>
+&lt;/service&gt;
+</pre>
 
 ###2. Add main Countly SDK to your project using steps below:
 
